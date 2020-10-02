@@ -1,0 +1,197 @@
+close all;
+clear;
+
+
+%% Insert true system
+
+% Task i) 20 MPH: 
+
+k_0 = 0.82;
+w_0 = 20;
+psi_0 = 0.32;
+k_1 = 0.055;
+w_1 = 14.2;
+psi_1 = 0.318;
+
+% tf theta_p -> r = G0/(1+G0)
+b_0 = k_0*w_0^2;
+a_0 = [1 2*psi_0*w_0 w_0^2];
+[A_0, B_0, C_0, D_0] = tf2ss(b_0, a_0);
+
+% tf theta_dot -> theta_p = G1
+b_1 = k_1*w_1^2;
+a_1 = [1 2*psi_1*w_1 w_1];
+[A_1, B_1, C_1, D_1] = tf2ss(b_1, a_1);
+
+%% Define filters
+lambda_0_0 = 6;
+lambda_0_1 = 1;
+
+[ ~, ~,C_f_1_0,D_f_1_0] = tf2ss([0 0 1],[1 lambda_0_1 lambda_0_0]);
+[ ~, ~,C_f_2_0,D_f_2_0] = tf2ss([0 1 0],[1 lambda_0_1 lambda_0_0]);
+[A_f_0,B_f_0,C_f_3_0,D_f_3_0] = tf2ss([1 0 0],[1 lambda_0_1 lambda_0_0]);
+
+lambda_1_0 = 6;
+lambda_1_1 = 1;
+
+[ ~, ~,C_f_1_1,D_f_1_1] = tf2ss([0 0 1],[1 lambda_1_1 lambda_1_0]);
+[ ~, ~,C_f_2_1,D_f_2_1] = tf2ss([0 1 0],[1 lambda_1_1 lambda_1_0]);
+[A_f_1,B_f_1,C_f_3_1,D_f_3_1] = tf2ss([1 0 0],[1 lambda_1_1 lambda_1_0]);
+
+
+%% Adaptive gain
+v_1 = [500 5];
+Gamma_1   = diag(v_1);        
+v_2 = [500 5];
+Gamma_2 = diag(v_2);
+
+k_max = 1;
+w_max = 30;
+
+%% Simulate system
+h = 0.01; % sample time (s)
+N = 50000; % number of samples
+t = 0:h:h*(N-1);
+
+% Define input as a function of t
+V = 20;
+r = 10*sin(0.2*t) + 0.1396;
+
+% Memory allocation
+x = zeros(2, N); 
+gamma_0 = zeros(3, N);
+gamma_1 = zeros(3, N);
+
+
+% Initial estimate
+k_0_i = 0.3; w_0_i = 14; psi_0_i = 0.1;
+gamma_0(:,1) = [1/(k_0_i*w_0_i^2); 2*psi_0_i/(k_0_i*w_0_i); 1/k_0_i];
+k_1_i = 0.1; w_1_i = 10; psi_1_i = 0.1;
+gamma_1(:,1) = [1/(k_1_i*w_1_i^2); 2*psi_1_i/(k_1_i*w_1_i); 1/k_1_i];
+
+% Main loop. Simulate using forward Euler (x[k+1] = x[k] + h*x_dot)
+for n = 1:N-1
+    
+    % Simulate true system
+    theta_p_dot = C_0*(A_0*x(1, n) + B_0*r(n));
+    theta_dot_dot = C_1*(A_1*x(2, n) + B_1*x(1, n));
+    x_dot = [theta_p_dot; theta_dot_dot];
+    x(:, n+1) = x(:, n) + h*x_dot;
+    
+    theta_p = x(1, n);
+    theta_dot = x(2, n);
+    
+    % Generate z_0, z_1, phi_0 and phi_1 by filtering known signals
+    
+    x_z_0_n = x_z_0 + (A_f_0*x_z_0 + B_f_0*r(n))*h;
+    z_0 = C_f_1_0*x_z_0;
+    
+    x_phi_0_n = x_phi_0 + (A_f*x_phi_0 + B_f*theta_p)*h;
+    phi_0 = [(C_f_3_0*x_phi_0 + D_f_3_0*theta_p);
+            (C_f_2_0*x_phi_0 + D_f_2_0*theta_p)];
+    
+    x_z_1_n = x_z_1 + (A_f_1*x_z_1 + B_f_1*theta_p)*h;
+    z_1 = C_f_1_1*x_z_1;
+    
+    x_phi_1_n = x_phi_1 + (A_f*x_phi_1 + B_f*theta_dot)*h;
+    phi_1 = [(C_f_3_1*x_phi_1 + D_f_3_1*theta_dot);
+            (C_f_2_1*x_phi_1 + D_f_2_1*theta_dot)];
+
+    % Generate z_1 and phi_1
+    %z_1 = u(n);
+    %phi_1 = y_1 - y_2;
+    
+    % Calculate estimation error
+    n_s_0 = phi_0'*phi_0;
+    n_s_1 = phi_1'*phi_1;
+    epsilon_0 = (z_0-gamma_0(:, n)'*phi_0)/(1+n_s_0^2);
+    epsilon_1 = (z_1-gamma_1(:, n)'*phi_1)/(1+n_s_1^2);
+    
+    %Find value of g and grad_g
+    k_0_n = 1/gamma_0(3, n);
+    w_0_n = gamma_0(3, n)/gamma_0(1, n);
+    psi_0_n = 0.5*(gamma_0(2, n)*gamma_0(3, n)*sqrt(w_0_n));
+    
+    k_1_n = 1/gamma_1(3, n);
+    w_1_n = gamma_1(3, n)/gamma_1(1, n);
+    psi_1_n = 0.5*(gamma_1(2, n)*gamma_1(3, n)*sqrt(w_1_n));
+    
+    args_0 = [1/k_max - gamma_0(3, n); 1/(k_max*w_max^2) - gamma_0(1, n)];
+    args_1 = [1/k_max - gamma_1(3, n); 1/(k_max*w_max^2) - gamma_1(1, n)];
+    
+    g0 = max(args_0);
+    g1 = max(args_1);
+    grad_g_0 = [-1 0 -1]';
+    grad_g_1 = [-1 0 -1]';
+    
+    if (1/k_max == gamma_0(3, n))
+        grad_g_0(1) = 0;
+    end
+    if (1/(k_max*w_max^2) == gamma_0(1, n))
+        grad_g_0(3) = 0;
+    end
+    
+    if (1/k_max == gamma_1(3, n))
+        grad_g_1(1) = 0;
+    end
+    if (1/(k_max*w_max^2) == gamma_1(1, n))
+        grad_g_1(3) = 0;
+    end
+    
+    % Update law: gamma0_dot
+    if g_0 < 0 || ((g_0 == 0) && ((Gamma_0*epsilon_0*phi_0)'*grad_g_0 <= 0))
+        gamma_0_dot = Gamma_0*epsilon_0*phi_0;
+        gamma_0(:, n+1) = gamma_0(:, n) + gamma_0_dot*h;
+    else
+        gamma_0_dot = Gamma_0*epsilon_0*phi_0 - Gamma_0*(grad_g_0'*Gamma_0*grad_g_0)\(grad_g_0*grad_g_0')*Gamma_0*epsilon_0*phi_0;
+        gamma_0(:, n+1) = gamma_0(:, n) + gamma_0*h;
+    end
+    
+    % Update law: gamma1_dot
+    if g_1 < 0 || ((g_1 == 0) && ((Gamma_1*epsilon_1*phi_1)'*grad_g_1 <= 0))
+        gamma_1_dot = Gamma_1*epsilon_1*phi_1;
+        gamma_1(:, n+1) = gamma_1(:, n) + gamma_1_dot*h;
+    else
+        gamma_1_dot = Gamma_1*epsilon_1*phi_1 - Gamma_1*(grad_g_1'*Gamma_1*grad_g_1)\(grad_g_1*grad_g_1')*Gamma_1*epsilon_1*phi_1;
+        gamma_1(:, n+1) = gamma_1(:, n) + gamma_1*h;
+    end
+   
+    
+    % Set values for next iteration
+    x_z_0 = x_z_0_n;
+    x_phi_ = x_phi_1_n;
+    
+    x_z_1 = x_z_1_n;
+    
+    
+    x_phi_2 = x_phi_2_n;
+    x_z_2 = x_z_2_n;
+end
+
+
+% Plots
+figure
+
+subplot(3,1,3)
+plot(t, theta_1(1,:)); hold on
+plot([t(1), t(end)],[k, k]); hold off
+ylabel('k')
+grid
+legend('estimate','true value')
+sgtitle('Parameter estimates')
+xlabel('t [s]')
+
+subplot(3,1,1)
+plot(t, theta_2(1,:)); hold on
+plot([t(1), t(end)], [m m]); hold off
+ylabel('m')
+legend('estimate','true value')
+grid
+
+subplot(3,1,2)
+plot(t, theta_2(2,:)); hold on
+plot([t(1), t(end)],[beta, beta]); hold off
+ylabel('\beta')
+legend('estimate','true value')
+grid
+
