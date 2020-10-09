@@ -1,7 +1,6 @@
 close all;
 clear;
 
-
 %% Insert true system
 % Task i) 20 MPH: 
 
@@ -12,8 +11,8 @@ k_1 = 0.055;
 w_1 = 14.2;
 zeta_1 = 0.318;
 
+
 % tf theta_p -> r = G0/(1+G0)
-%OBS: LITT USIKKER PÅ HVORDAN JEG BRUKER DISSE!
 b_0 = k_0*w_0^2;
 a_0 = [1 2*zeta_0*w_0 w_0^2];
 [A_0, B_0, C_0, D_0] = tf2ss(b_0, a_0);
@@ -24,15 +23,15 @@ a_1 = [1 2*zeta_1*w_1 w_1];
 [A_1, B_1, C_1, D_1] = tf2ss(b_1, a_1);
 
 %% Define filters
-lambda_0_0 = 10;
-lambda_0_1 = 50;
+lambda_0_0 = 100;
+lambda_0_1 = 500;
 
 [ ~, ~,C_f_1_0,D_f_1_0] = tf2ss([0 0 1],[1 lambda_0_1 lambda_0_0]);
 [ ~, ~,C_f_2_0,D_f_2_0] = tf2ss([0 1 0],[1 lambda_0_1 lambda_0_0]);
 [A_f_0,B_f_0,C_f_3_0,D_f_3_0] = tf2ss([1 0 0],[1 lambda_0_1 lambda_0_0]);
 
-lambda_1_0 = 10;
-lambda_1_1 = 50;
+lambda_1_0 = 100;
+lambda_1_1 = 500;
 
 [ ~, ~,C_f_1_1,D_f_1_1] = tf2ss([0 0 1],[1 lambda_1_1 lambda_1_0]);
 [ ~, ~,C_f_2_1,D_f_2_1] = tf2ss([0 1 0],[1 lambda_1_1 lambda_1_0]);
@@ -40,10 +39,10 @@ lambda_1_1 = 50;
 
 
 %% Adaptive gain
-v_1 = [5000 5000 1000];
-Gamma_0   = diag(v_1);        
-v_2 = [5000 5000 1000];
-Gamma_1 = diag(v_2);
+v_0 = [75 50 100];
+Gamma_0   = diag(v_0);        
+v_1 = [250 200 100];
+Gamma_1 = diag(v_1);
 
 k_max = 1;
 w_max = 30;
@@ -62,6 +61,8 @@ gamma_0 = zeros(3, N);
 gamma_1 = zeros(3, N);
 estimates_0 = zeros(3, N);
 estimates_1 = zeros(3, N);
+x_0 = zeros(2, N);
+x_1 = zeros(2, N);
 x_z_0 = zeros(2, 1);
 x_phi_0 = zeros(2, 1);
 x_z_1 = zeros(2, 1);
@@ -76,27 +77,29 @@ gamma_1(:,1) = [1/(k_1_i*w_1_i^2); 2*zeta_1_i/(k_1_i*w_1_i); 1/k_1_i];
 
 % Main loop. Simulate using forward Euler (x[k+1] = x[k] + h*x_dot)
 for n = 1:N-1
-    
-    % Simulate true system
-    temp_0 = A_0*x(1, n) + B_0*r(n);
-    theta_p_dot = temp_0(1); %temp_0 holds [theta_p_dot; theta_p_dot_dot]
-    temp_1 = A_1*x(2, n) + B_1*x(1, n);
-    theta_dot_dot = temp_1(1);
-    x_dot = [theta_p_dot; theta_dot_dot];
-    x(:, n+1) = x(:, n) + h*x_dot;
-    
-    theta_p = x(1, n);    
-    theta_dot = x(2, n);
 
+    % Simulate true system
+    
+    % tf theta_p -> r = G0/(1+G0)
+    x_0_dot = A_0*x_0(:, n) + B_0*r(n);
+    x_0(:, n+1) = x_0(:, n) + h*x_0_dot;
+    y_0 = C_0*x_0(:, n+1) + D_0*r(n);
+    theta_p = y_0;
+    
+    % tf theta_dot -> theta_p = G1
+    x_1_dot = A_1*x_1(:, n) + B_1*theta_p;
+    x_1(:, n+1) = x_1(:, n) + h*x_1_dot;
+    y_1 = C_1*x_1(:, n+1) + D_1*theta_p;
+    theta_dot = y_1;
     
     % Generate z_0, z_1, phi_0 and phi_1 by filtering known signals
     x_z_0_n = x_z_0 + (A_f_0*x_z_0 + B_f_0*r(n))*h;
     z_0 = C_f_1_0*x_z_0;
     
     x_phi_0_n = x_phi_0 + (A_f_0*x_phi_0 + B_f_0*theta_p)*h;
-    phi_0 = [(C_f_3_0*x_phi_0 + D_f_3_0*theta_p);   %s^2/Lambda *theta_p
-            (C_f_2_0*x_phi_0 + D_f_2_0*theta_p);    %s/Lambda *theta_p
-             (C_f_1_0*x_phi_0 + D_f_1_0*theta_p)];      %1/Lambda *theta_p
+    phi_0 = [(C_f_3_0*x_phi_0 + D_f_3_0*theta_p);           %s^2/Lambda *theta_p
+            (C_f_2_0*x_phi_0 + D_f_2_0*theta_p);            %s/Lambda *theta_p
+            (C_f_1_0*x_phi_0 + D_f_1_0*theta_p)];           %1/Lambda *theta_p
     
     x_z_1_n = x_z_1 + (A_f_1*x_z_1 + B_f_1*theta_p)*h;
     z_1 = C_f_1_1*x_z_1;

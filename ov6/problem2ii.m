@@ -18,10 +18,10 @@ lambda_1_1 = 50;
 
 
 %% Adaptive gain
-v_1 = [5000 5000 1000];
-Gamma_0   = diag(v_1);        
-v_2 = [5000 5000 1000];
-Gamma_1 = diag(v_2);
+v_0 = [5 5 5];
+Gamma_0   = diag(v_0);        
+v_1 = [250 200 100];
+Gamma_1 = diag(v_1);
 
 k_max = 1;
 w_max = 30;
@@ -40,6 +40,8 @@ gamma_0 = zeros(3, N);
 gamma_1 = zeros(3, N);
 estimates_0 = zeros(3, N);
 estimates_1 = zeros(3, N);
+x_0 = zeros(2, N);
+x_1 = zeros(2, N);
 x_z_0 = zeros(2, 1);
 x_phi_0 = zeros(2, 1);
 x_z_1 = zeros(2, 1);
@@ -76,7 +78,6 @@ for n = 1:N-1
     zeta_1  = zeta_1_t(n);
 
     % tf theta_p -> r = G0/(1+G0)
-    %OBS: LITT USIKKER PÅ HVORDAN JEG BRUKER DISSE!
     b_0 = k_0*w_0^2;
     a_0 = [1 2*zeta_0*w_0 w_0^2];
     [A_0, B_0, C_0, D_0] = tf2ss(b_0, a_0);
@@ -87,16 +88,18 @@ for n = 1:N-1
     [A_1, B_1, C_1, D_1] = tf2ss(b_1, a_1);
     
     % Simulate true system
-    %temp_0 = A_0*x(1, n) + B_0*r;
-    %SPØR STUDASS: IKKE MENINGEN Å FILTRERE HER?
-    theta_p_dot = r; %temp_0(1); %temp_0 holds [theta_p_dot; theta_p_dot_dot]
-    temp_1 = A_1*x(2, n) + B_1*x(1, n);
-    theta_dot_dot = temp_1(1);
-    x_dot = [theta_p_dot; theta_dot_dot];
-    x(:, n+1) = x(:, n) + h*x_dot;
     
-    theta_p = x(1, n);
-    theta_dot = x(2, n);
+    % tf theta_p -> r = G0/(1+G0)
+    x_0_dot = A_0*x_0(:, n) + B_0*r;
+    x_0(:, n+1) = x_0(:, n) + h*x_0_dot;
+    y_0 = C_0*x_0(:, n+1) + D_0*r;
+    theta_p = y_0;
+    
+    % tf theta_dot -> theta_p = G1
+    x_1_dot = A_1*x_1(:, n) + B_1*theta_p;
+    x_1(:, n+1) = x_1(:, n) + h*x_1_dot;
+    y_1 = C_1*x_1(:, n+1) + D_1*theta_p;
+    theta_dot = y_1;
         
     % Generate z_0, z_1, phi_0 and phi_1 by filtering known signals
     x_z_0_n = x_z_0 + (A_f_0*x_z_0 + B_f_0*r*h);
